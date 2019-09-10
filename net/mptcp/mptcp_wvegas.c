@@ -82,7 +82,7 @@ static void wvegas_enable(const struct sock *sk)
 static inline void wvegas_disable(const struct sock *sk)
 {
 	struct wvegas *wvegas = inet_csk_ca(sk);
-
+	// printk("Disable wvegas\n");
 	wvegas->doing_wvegas_now = 0;
 }
 
@@ -119,6 +119,7 @@ static void mptcp_wvegas_pkts_acked(struct sock *sk,
 
 static void mptcp_wvegas_state(struct sock *sk, u8 ca_state)
 {
+	// printk("ca_state %u (TCP_CA_Open %d)", ca_state, ca_state==TCP_CA_Open);
 	if (ca_state == TCP_CA_Open)
 		wvegas_enable(sk);
 	else
@@ -169,16 +170,20 @@ static void mptcp_wvegas_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct wvegas *wvegas = inet_csk_ca(sk);
+	// printk("cong_avoid phase\n");
 
 	if (!wvegas->doing_wvegas_now) {
 		tcp_reno_cong_avoid(sk, ack, acked);
+		printk("Reno cong_avoid, not doing wvegas\n");
 		return;
 	}
 
 	if (after(ack, wvegas->beg_snd_nxt)) {
+		// printk("after entered; ack %d   beg_snd_nxt %d   snd_nxt %d ", ack, wvegas->beg_snd_nxt, tp->snd_nxt);
 		wvegas->beg_snd_nxt  = tp->snd_nxt;
 
 		if (wvegas->cnt_rtt <= 2) {
+			// printk("reno cong_avoid, %d \n", wvegas->cnt_rtt);
 			tcp_reno_cong_avoid(sk, ack, acked);
 		} else {
 			u32 rtt, diff, q_delay;
@@ -188,8 +193,10 @@ static void mptcp_wvegas_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 			target_cwnd = div_u64(((u64)tp->snd_cwnd * wvegas->base_rtt), rtt);
 
 			diff = div_u64((u64)tp->snd_cwnd * (rtt - wvegas->base_rtt), rtt);
+			printk("wVegas Info: rtt: %d base_rtt: %d target_cwnd: %llu cwnd: %d diff: %d alpha: %d queue_delay %d gamma %d equi_rate %lld \n", rtt, wvegas->base_rtt, target_cwnd, tp->snd_cwnd, diff, wvegas->alpha, wvegas->queue_delay, gamma, wvegas->instant_rate);
 
 			if (diff > gamma && tcp_in_slow_start(tp)) {
+			        printk("Gamma Trap: gamma: %d     rtt: %d, diff: %d \n", gamma, rtt, diff);
 				tp->snd_cwnd = min(tp->snd_cwnd, (u32)target_cwnd+1);
 				tp->snd_ssthresh = mptcp_wvegas_ssthresh(tp);
 
@@ -210,6 +217,7 @@ static void mptcp_wvegas_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 				/* Try to drain link queue if needed*/
 				q_delay = rtt - wvegas->base_rtt;
+				// printk("Queuing delay is: %d, %d \n", q_delay, wvegas->queue_delay);
 				if ((wvegas->queue_delay == 0) || (wvegas->queue_delay > q_delay))
 					wvegas->queue_delay = q_delay;
 
@@ -217,6 +225,7 @@ static void mptcp_wvegas_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 					u32 backoff_factor = div_u64(mptcp_wvegas_scale(wvegas->base_rtt, MPTCP_WVEGAS_SCALE), 2 * rtt);
 					tp->snd_cwnd = ((u64)tp->snd_cwnd * backoff_factor) >> MPTCP_WVEGAS_SCALE;
 					wvegas->queue_delay = 0;
+					printk("Backoff phase new cwnd: %d\n", tp->snd_cwnd);
 				}
 			}
 
